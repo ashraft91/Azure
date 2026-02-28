@@ -1,2 +1,108 @@
 az login
 az account set --subscription "<Your-Subscription-ID>"
+
+-------------------------------------------------------------
+
+az group create --name rg-hub-spoke-network-prod --location eastus
+
+--------------------------------------------------------------
+
+az deployment group create \
+  --resource-group rg-hub-spoke-network-prod \
+  --template-file src/main.bicep \
+  --parameters adminPassword="YourSecurePassword123!"
+
+--------------------------------------------------------------
+
+az group delete --name rg-hub-spoke-network-prod --yes --no-wait
+
+--------------------------------------------------------------
+
+---
+
+### 2. `src/main.bicep`
+*This is the actual code that performs the deployment. Place this inside a folder named `src`.*
+
+```bicep
+@description('Location for all resources.')
+param location string = resourceGroup().location
+
+@description('Prefix for resource names')
+param prefix string = 'core'
+
+// 1. Deploy Hub Virtual Network
+resource hubVnet 'Microsoft.Network/virtualNetworks@2023-04-01' = {
+  name: 'vnet-${prefix}-hub-${location}'
+  location: location
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        '10.0.0.0/16'
+      ]
+    }
+    subnets: [
+      {
+        name: 'AzureFirewallSubnet'
+        properties: {
+          addressPrefix: '10.0.1.0/26'
+        }
+      }
+      {
+        name: 'AzureBastionSubnet'
+        properties: {
+          addressPrefix: '10.0.2.0/26'
+        }
+      }
+    ]
+  }
+}
+
+// 2. Deploy Spoke 1 Virtual Network (Workload A)
+resource spoke1Vnet 'Microsoft.Network/virtualNetworks@2023-04-01' = {
+  name: 'vnet-${prefix}-spoke1-${location}'
+  location: location
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        '10.1.0.0/16'
+      ]
+    }
+    subnets: [
+      {
+        name: 'snet-workload'
+        properties: {
+          addressPrefix: '10.1.1.0/24'
+        }
+      }
+    ]
+  }
+}
+
+// 3. Configure VNet Peering (Hub to Spoke 1)
+resource peerHubToSpoke1 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2023-04-01' = {
+  parent: hubVnet
+  name: 'peer-hub-to-spoke1'
+  properties: {
+    allowVirtualNetworkAccess: true
+    allowForwardedTraffic: true
+    remoteVirtualNetwork: {
+      id: spoke1Vnet.id
+    }
+  }
+}
+
+// 4. Configure VNet Peering (Spoke 1 to Hub)
+resource peerSpoke1ToHub 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2023-04-01' = {
+  parent: spoke1Vnet
+  name: 'peer-spoke1-to-hub'
+  properties: {
+    allowVirtualNetworkAccess: true
+    allowForwardedTraffic: true
+    remoteVirtualNetwork: {
+      id: hubVnet.id
+    }
+  }
+}
+
+output hubVnetName string = hubVnet.name
+output spoke1VnetName string = spoke1Vnet.name
